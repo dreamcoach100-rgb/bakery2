@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>도시 속의 미식 복합 공간 | [레스토랑 이름]</title>
+    <!-- Tailwind CSS CDN 로드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 폰트 설정: Inter 폰트를 기본으로 사용합니다. -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Noto+Sans+KR:wght@100..900&display=swap');
+        body {
+            font-family: 'Noto Sans KR', 'Inter', sans-serif;
+        }
+        .video-container {
+            position: relative;
+            overflow: hidden;
+            height: 100vh;
+        }
+        .video-container video {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: translate(-50%, -50%);
+            z-index: -1;
+        }
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.4);
+            z-index: 0;
+        }
+        .section-video {
+            min-height: 50vh;
+            max-width: 100%;
+            display: block;
+            object-fit: cover;
+            border-radius: 0.75rem; /* rounded-xl */
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800">
+    
+    <!-- API Key is intentionally left blank for security and runtime provisioning -->
+    <script>
+        const API_KEY = ""; 
+        const API_URL_BASE = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
+        
+        // Base64 디코딩 및 WAV 변환 함수 (TTS용)
+        // 이 예제에서는 TTS를 사용하지 않으므로 포함하지 않습니다.
+
+        /**
+         * Gemini API 호출을 위한 래퍼 함수 (Exponential Backoff 포함)
+         * @param {string} userQuery - 사용자 입력 프롬프트
+         * @param {string} systemPrompt - 시스템 지침
+         * @returns {Promise<string>} - 모델이 생성한 텍스트
+         */
+        async function callGeminiApi(userQuery, systemPrompt) {
+            const payload = {
+                contents: [{ parts: [{ text: userQuery }] }],
+                systemInstruction: { parts: [{ text: systemPrompt }] },
+            };
+
+            const maxRetries = 5;
+            let delay = 1000;
+
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(API_URL_BASE, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (response.status === 429 && i < maxRetries - 1) {
+                        // Rate limit error (429), retry with exponential backoff
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        delay *= 2;
+                        continue;
+                    }
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(`API call failed: ${response.status} - ${errorData.error.message}`);
+                    }
+
+                    const result = await response.json();
+                    const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (!text) {
+                        throw new Error("Gemini API response format is invalid or empty.");
+                    }
+                    return text;
+
+                } catch (error) {
+                    console.error("Gemini API Error:", error);
+                    if (i === maxRetries - 1) {
+                        return `요청 처리 중 오류가 발생했습니다: ${error.message}. 잠시 후 다시 시도해 주세요.`;
+                    }
+                    // Continue to next retry
+                }
+            }
+            return "요청을 처리하는 데 실패했습니다. 다시 시도해 주세요.";
+        }
+
+
+        // --- ✨ 메뉴 아이디어 추천 기능 ---
+
+        async function generateMenuIdea() {
+            const ingredient = document.getElementById('menuIngredient').value.trim();
+            const mood = document.getElementById('menuMood').value.trim();
+            const resultElement = document.getElementById('menuIdeaResult');
+            const generateButton = document.getElementById('generateMenuButton');
+
+            if (!ingredient && !mood) {
+                resultElement.innerHTML = '<p class="text-yellow-600">재료 또는 분위기 중 하나 이상을 입력해 주세요!</p>';
+                return;
+            }
+
+            resultElement.innerHTML = '<p class="text-blue-500 animate-pulse">✨ 메뉴 아이디어를 생성 중입니다...</p>';
+            generateButton.disabled = true;
+
+            const userQuery = `다음 조건에 맞는 복합 음식점 메뉴 아이디어를 1~2개 제안해 줘. 각 메뉴에 대해 이름과 간단한 설명을 포함해 줘. 재료: "${ingredient}", 분위기: "${mood}"`;
+            
+            const systemPrompt = "당신은 세계적인 레스토랑의 혁신적인 메뉴 개발 컨설턴트입니다. 사용자가 제공한 재료나 분위기를 바탕으로 고급 다이닝과 캐주얼 카페의 요소를 융합한 창의적이고 매력적인 메뉴를 한국어로 제안해야 합니다. 답변은 간결하고 세련된 문장으로 작성하세요.";
+
+            const resultText = await callGeminiApi(userQuery, systemPrompt);
+
+            // 결과 텍스트를 마크다운 스타일로 변환 (줄바꿈 처리)
+            const formattedText = resultText.replace(/\n/g, '<br>');
+            resultElement.innerHTML = `<div class="p-4 bg-gray-100 rounded-lg border border-gray-200">${formattedText}</div>`;
+            generateButton.disabled = false;
+        }
+
+        // --- ✨ 맞춤 이벤트 초대 문구 생성 기능 ---
+
+        async function generateInvitationText() {
+            const eventType = document.getElementById('eventType').value.trim();
+            const eventTone = document.getElementById('eventTone').value.trim();
+            const resultElement = document.getElementById('invitationResult');
+            const generateButton = document.getElementById('generateInvitationButton');
+            
+            if (!eventType) {
+                resultElement.innerHTML = '<p class="text-yellow-600">행사 종류를 입력해 주세요!</p>';
+                return;
+            }
+
+            resultElement.innerHTML = '<p class="text-blue-500 animate-pulse">✨ 초대 문구를 생성 중입니다...</p>';
+            generateButton.disabled = true;
+
+            const userQuery = `[레스토랑 이름]의 특별 이벤트 공간을 위한 초대 문구를 1개 작성해 줘. 행사 종류: "${eventType}", 원하는 분위기/톤: "${eventTone}". 문구는 매력적이고, 예약 문의를 유도하는 내용을 포함해야 해.`;
+            
+            const systemPrompt = "당신은 고급 복합 음식점의 마케팅 전문가입니다. 사용자의 요청에 따라 행사에 적합한 톤앤매너로 고객의 참여를 유도하는 전문적이고 세련된 초대 문구 초안을 한국어로 작성하세요. 문구는 약 4~6줄 분량으로 간결하게 구성해야 합니다.";
+
+            const resultText = await callGeminiApi(userQuery, systemPrompt);
+
+            // 결과 텍스트를 마크다운 스타일로 변환 (줄바꿈 처리)
+            const formattedText = resultText.replace(/\n/g, '<br>');
+            resultElement.innerHTML = `<div class="p-4 bg-gray-100 rounded-lg border border-gray-200">${formattedText}</div>`;
+            generateButton.disabled = false;
+        }
+
+
+        // 비디오 재생 오류 처리 및 기본 로딩 최적화
+        document.addEventListener('DOMContentLoaded', () => {
+            const videos = document.querySelectorAll('video');
+            videos.forEach(video => {
+                video.addEventListener('loadedmetadata', () => {
+                    // 자동 재생 시도. 브라우저 정책에 따라 소리 있는 비디오는 자동 재생이 차단될 수 있음.
+                    video.play().catch(error => {
+                        console.log('Video autoplay with sound blocked. User interaction required.', error);
+                    });
+                });
+            });
+
+            // 부드러운 스크롤 (CTA 버튼 클릭 시)
+            document.querySelector('a[href="#sections"]').addEventListener('click', function(e) {
+                e.preventDefault();
+                document.getElementById('sections').scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+    </script>
+
+    <!-- Hero Section: 비디오 배경 -->
+    <header class="video-container relative text-white">
+        <!-- 'muted' 속성 제거 및 'controls' 추가 -->
+        <video id="heroVideo" autoplay loop playsinline controls>
+            <!-- 가장 대표적인 분위기를 보여줄 vid01.mp4를 히어로 배경으로 사용 -->
+            <source src="vid01.mp4" type="video/mp4">
+            죄송합니다. 이 브라우저는 비디오를 지원하지 않습니다.
+        </video>
+        <div class="overlay"></div>
+        <div class="container mx-auto flex h-full items-center justify-center p-6 text-center relative z-10">
+            <div class="max-w-4xl bg-black/50 p-8 md:p-12 rounded-xl shadow-2xl backdrop-blur-sm">
+                <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight mb-4 animate-fadeIn">
+                    도시 속의 오아시스, [레스토랑 이름]
+                </h1>
+                <p class="text-xl md:text-2xl font-light mb-8">
+                    미식, 문화, 그리고 휴식을 한 곳에서 경험하세요.
+                </p>
+                <a href="#sections" class="inline-block px-8 py-3 text-lg font-semibold bg-red-600 hover:bg-red-700 transition duration-300 rounded-full shadow-lg transform hover:scale-105">
+                    공간 둘러보기
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Content Sections -->
+    <main id="sections" class="container mx-auto py-16 px-4 md:px-8">
+
+        <!-- Section 1: 프리미엄 다이닝 (vid01.mp4) -->
+        <section class="mb-24 bg-white p-6 md:p-12 rounded-3xl shadow-xl transition duration-500 hover:shadow-2xl flex flex-col md:flex-row items-center gap-8" data-aos="fade-up">
+            <div class="md:w-1/2 w-full">
+                <h2 class="text-4xl font-bold mb-4 text-red-600">01. 프리미엄 다이닝</h2>
+                <p class="text-gray-600 text-lg mb-6 leading-relaxed">
+                    최고의 셰프가 제철 식재료로 선사하는 창의적인 요리를 경험하세요. 기념일, 비즈니스 미팅 등 특별한 순간을 위한 완벽한 공간입니다.
+                </p>
+                <ul class="list-disc list-inside space-y-2 text-gray-700">
+                    <li>시그니처 코스 요리</li>
+                    <li>세계적인 와인 페어링</li>
+                    <li>프라이빗 룸 완비</li>
+                </ul>
+
+                <!-- Gemini Feature 1: 메뉴 아이디어 추천 -->
+                <div class="mt-8 pt-6 border-t border-gray-200">
+                    <h3 class="text-2xl font-semibold mb-4 text-gray-800">✨ 나만의 메뉴 아이디어 추천받기</h3>
+                    <div class="space-y-4">
+                        <input type="text" id="menuIngredient" placeholder="주요 재료 입력 (예: 트러플, 제철 해산물)" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500">
+                        <input type="text" id="menuMood" placeholder="원하는 분위기 입력 (예: 이국적, 캐주얼, 퓨전)" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500">
+                        <button id="generateMenuButton" onclick="generateMenuIdea()" class="w-full p-3 font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition duration-300 transform hover:scale-[1.01]">
+                            ✨ 아이디어 생성
+                        </button>
+                    </div>
+                    <div id="menuIdeaResult" class="mt-4 text-sm text-gray-700 min-h-[50px]">
+                        <!-- 결과가 여기에 표시됩니다. -->
+                    </div>
+                </div>
+                <!-- End Gemini Feature 1 -->
+
+            </div>
+            <div class="md:w-1/2 w-full shadow-2xl rounded-xl">
+                <!-- 'muted' 속성 제거 및 'controls' 추가 -->
+                <video class="section-video" autoplay loop playsinline controls>
+                    <source src="vid01.mp4" type="video/mp4">
+                    비디오를 로드할 수 없습니다.
+                </video>
+            </div>
+        </section>
+
+        <!-- Section 2: 아늑한 라운지 & 카페 (vid02.mp4) -->
+        <section class="mb-24 bg-white p-6 md:p-12 rounded-3xl shadow-xl transition duration-500 hover:shadow-2xl flex flex-col md:flex-row-reverse items-center gap-8" data-aos="fade-up">
+            <div class="md:w-1/2 w-full">
+                <h2 class="text-4xl font-bold mb-4 text-red-600">02. 아늑한 라운지 & 카페</h2>
+                <p class="text-gray-600 text-lg mb-6 leading-relaxed">
+                    여유로운 커피 한 잔과 달콤한 디저트, 편안한 소파. 도심 속 쉼터에서 재충전의 시간을 가져보세요. 가벼운 브런치도 준비되어 있습니다.
+                </p>
+                <ul class="list-disc list-inside space-y-2 text-gray-700">
+                    <li>전문 바리스타의 스페셜티 커피</li>
+                    <li>수제 베이커리 및 디저트</li>
+                    <li>자유로운 대화 공간</li>
+                </ul>
+            </div>
+            <div class="md:w-1/2 w-full shadow-2xl rounded-xl">
+                <!-- 'muted' 속성 제거 및 'controls' 추가 -->
+                <video class="section-video" autoplay loop playsinline controls>
+                    <source src="vid02.mp4" type="video/mp4">
+                    비디오를 로드할 수 없습니다.
+                </video>
+            </div>
+        </section>
+
+        <!-- Section 3: 특별한 이벤트 공간 (vid03.mp4) -->
+        <section class="mb-16 bg-white p-6 md:p-12 rounded-3xl shadow-xl transition duration-500 hover:shadow-2xl flex flex-col md:flex-row items-center gap-8" data-aos="fade-up">
+            <div class="md:w-1/2 w-full">
+                <h2 class="text-4xl font-bold mb-4 text-red-600">03. 특별한 이벤트 공간</h2>
+                <p class="text-gray-600 text-lg mb-6 leading-relaxed">
+                    세미나, 워크숍, 소규모 웨딩, 파티 등 다양한 목적에 맞는 맞춤형 공간을 제공합니다. 전문 이벤트팀이 성공적인 행사를 도와드립니다.
+                </p>
+                <ul class="list-disc list-inside space-y-2 text-gray-700">
+                    <li>최신 AV 시스템 제공</li>
+                    <li>맞춤형 케이터링 서비스</li>
+                    <li>유연한 공간 분할</li>
+                </ul>
+
+                <!-- Gemini Feature 2: 맞춤 이벤트 초대 문구 생성 -->
+                <div class="mt-8 pt-6 border-t border-gray-200">
+                    <h3 class="text-2xl font-semibold mb-4 text-gray-800">✨ 맞춤 초대 문구 생성</h3>
+                    <div class="space-y-4">
+                        <input type="text" id="eventType" placeholder="행사 종류 (예: 소규모 웨딩, 기업 세미나)" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500">
+                        <input type="text" id="eventTone" placeholder="원하는 분위기/톤 (예: 고급스러운, 캐주얼한, 열정적인)" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-red-500 focus:border-red-500">
+                        <button id="generateInvitationButton" onclick="generateInvitationText()" class="w-full p-3 font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg transition duration-300 transform hover:scale-[1.01]">
+                            ✨ 문구 초안 생성
+                        </button>
+                    </div>
+                    <div id="invitationResult" class="mt-4 text-sm text-gray-700 min-h-[50px]">
+                        <!-- 결과가 여기에 표시됩니다. -->
+                    </div>
+                </div>
+                <!-- End Gemini Feature 2 -->
+
+            </div>
+            <div class="md:w-1/2 w-full shadow-2xl rounded-xl">
+                <!-- 'muted' 속성 제거 및 'controls' 추가 -->
+                <video class="section-video" autoplay loop playsinline controls>
+                    <source src="vid03.mp4" type="video/mp4">
+                    비디오를 로드할 수 없습니다.
+                </video>
+            </div>
+        </section>
+
+        <!-- CTA Section -->
+        <section class="text-center bg-red-600 text-white p-10 rounded-2xl shadow-xl">
+            <h2 class="text-3xl md:text-4xl font-bold mb-4">지금, 당신의 특별한 경험을 예약하세요.</h2>
+            <p class="text-xl mb-6">전화 문의: 02-1234-5678</p>
+            <a href="#" class="inline-block px-10 py-4 text-xl font-bold bg-white text-red-600 hover:bg-gray-100 transition duration-300 rounded-full shadow-2xl transform hover:scale-105">
+                온라인 예약하기
+            </a>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white py-8 px-4 mt-16">
+        <div class="container mx-auto text-center text-sm">
+            <p class="mb-2">© 2024 [레스토랑 이름]. All rights reserved.</p>
+            <p>서울시 강남구 [상세 주소] | 이메일: info@restaurant.com</p>
+        </div>
+    </footer>
+
+</body>
+</html>
